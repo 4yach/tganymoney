@@ -1,5 +1,5 @@
 
-from anymoney import AnyMoney
+from tgam.anymoney import AnyMoney
 
 __all__ = [
     "AnyMoney"
