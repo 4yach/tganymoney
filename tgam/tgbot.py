@@ -1,4 +1,3 @@
-
 import re
 import logging
 
@@ -48,8 +47,8 @@ merchant_apis = {
 
 # merchants buttons title:data
 merchants_btns = [
-    ['Мерчант 1', _app["AM_MERCH0"]],
-    ['Мерчант 2', _app["AM_MERCH1"]]
+    [_app['AM_NAME0'], _app["AM_MERCH0"]],
+    [_app['AM_NAME1'], _app["AM_MERCH1"]]
 ]
 
 # in_curr buttons title:data
@@ -70,7 +69,11 @@ status_text = '''
 Сумма:\t{amount}
 Почта:\t{email}
 Срок действия:\t{lifetime}</code>,
-<b>Ссылка на оплату</b>:\t{link} 
+<b><a href="{link}">Ссылка на оплату</a></b>
+'''
+
+link_text = '''
+<b><a href="{link}">Ссылка на оплату</a></b>
 '''
 
 cancel_btn = types.InlineKeyboardButton('Завершить', callback_data='cancel')
@@ -95,32 +98,51 @@ class Form(StatesGroup):
     lifetime = State()
 
 
-@AnyMoneyDispatcher.message_handler(commands=['start'])
-async def cmd_start(message: types.Message):
+@AnyMoneyDispatcher.message_handler(lambda message: message.text == 'start',  state='*')
+@AnyMoneyDispatcher.message_handler(state='*', commands=['start'])
+async def cmd_start(message: types.Message, state: FSMContext):
+
+    async with state.proxy() as data:
+        current_state = await state.get_state()
+        if current_state is not None:
+            if "invalid_message" in data:
+                await data["invalid_message"].delete()
+            await bot.delete_message(
+                chat_id=message.chat.id,
+                message_id=data['message_id']
+            )
+            await state.finish()
+
     await Form.merchant.set()
+    await message.delete()
 
     inline_keyboard = types.InlineKeyboardMarkup()
     btns = (types.InlineKeyboardButton(text, callback_data=data) for text, data in merchants_btns)
     inline_keyboard.row(*btns)
     inline_keyboard.row(cancel_btn)
 
-    await bot.send_message(
+    inline_message = await bot.send_message(
         chat_id=message.from_user.id,
         text='Выберете мерчант',
         reply_markup=inline_keyboard
     )
+    async with state.proxy() as data:
+        data['message_id'] = inline_message.message_id  # сохраняем id сообщения с инлайн кнопками
 
 
 @AnyMoneyDispatcher.callback_query_handler(state='*', text='cancel')
+@AnyMoneyDispatcher.callback_query_handler(text='cancel')
 async def cancel_handler(callback_query: CallbackQuery, state: FSMContext):
     """
     Allow user to cancel any action
     """
 
-    # удаляем сообщение об ошибке
+    # удаляем сообщение об ошибке и меню
     async with state.proxy() as data:
         if "invalid_message" in data:
             await data["invalid_message"].delete()
+
+    await callback_query.message.delete()
 
     current_state = await state.get_state()
     if current_state is None:
@@ -128,9 +150,8 @@ async def cancel_handler(callback_query: CallbackQuery, state: FSMContext):
 
     logging.info('Cancelling state %r', current_state)
     await state.finish()
-    await bot.edit_message_text(
-        chat_id=callback_query.from_user.id,
-        message_id=callback_query.message.message_id,
+    await bot.answer_callback_query(
+        callback_query_id=callback_query.id,
         text='Создание инвойса прекращено.'
     )
 
@@ -142,7 +163,6 @@ async def merchant_callback(callback_query: CallbackQuery, state: FSMContext):
     """
     async with state.proxy() as data:
         data['merchant_id'] = callback_query.data
-        data['message_id'] = callback_query.message.message_id  # сохраняем id сообщения с инлайн кнопками
 
     await Form.next()
 
@@ -174,7 +194,7 @@ async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
     await bot.edit_message_text(
         chat_id=callback_query.from_user.id,
         message_id=callback_query.message.message_id,
-        text="Введите сумму оплаты (Например: 3000 или 3000,10)",
+        text="Введите сумму оплаты (Например: 3990 или 3990,45)",
         reply_markup=inline_keyboard
     )
 
@@ -205,12 +225,13 @@ async def process_amount(message: types.Message, state: FSMContext):
         message_id = data['message_id']
         if data.get('invalid_message') is not None:
             await data['invalid_message'].delete()
+            del data['invalid_message']
 
     await Form.next()
+    await message.delete()
+
     inline_keyboard = types.InlineKeyboardMarkup()
     inline_keyboard.row(cancel_btn)
-
-    await message.delete()
 
     await bot.edit_message_text(
         chat_id=message.from_user.id,
@@ -232,15 +253,15 @@ async def process_client_email(message: types.Message, state: FSMContext):
             message_id = data['message_id']
             if data.get('invalid_message') is not None:
                 await data['invalid_message'].delete()
+                del data['invalid_message']
 
         await Form.next()
+        await message.delete()
 
         inline_keyboard = types.InlineKeyboardMarkup()
         btns = (types.InlineKeyboardButton(text, callback_data=data) for text, data in lifetime_btns)
         inline_keyboard.row(*btns)
         inline_keyboard.row(cancel_btn)
-
-        await message.delete()
 
         await bot.edit_message_text(
             chat_id=message.from_user.id,
@@ -294,7 +315,8 @@ async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
             await bot.edit_message_text(
                 chat_id=callback_query.from_user.id,
                 message_id=callback_query.message.message_id,
-                text=status_text.format(
+                disable_web_page_preview=True,
+                text=link_text.format(
                     merchant=_merch_id,
                     in_curr=_in_curr,
                     amount=_amount,
