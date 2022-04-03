@@ -1,31 +1,55 @@
-import logging
+
 import re
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+import logging
+
+from configparser import ConfigParser
+
+from tgam.anymoney import AnyMoney
+
+from aiogram import (
+    Bot,
+    Dispatcher,
+    types)
+from aiogram.types import CallbackQuery, ContentType
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import CallbackQuery, ContentType
-from aiogram.utils import executor
-from tgam.anymoney import AnyMoney
-logging.basicConfig(level=logging.INFO)
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
-API_TOKEN = ''
+# конфигурируем лог
+logging.basicConfig(
+    level=logging.INFO)
 
-bot = Bot(token=API_TOKEN, parse_mode="HTML")
+# открываем конфиг файл
+_cfg = ConfigParser()
+
+if "config.cfg" not in _cfg.read("config.cfg"):
+    raise Exception("Config is missing, create config.cfg in 'tganymoney'")
+
+_app = _cfg["App"]
+
+# проверяем наличие токена в конфиге, если такого нет выводим ошибку
+if "TG_TOKEN" in _app:
+    bot = Bot(
+        token=_app["TG_TOKEN"],
+        parse_mode="HTML")
+else:
+    raise Exception("Bot token is missing in config file")
 
 storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
 
-# merchants id:key
-merchants_keys = {
-    '1111': '1',
-    '2222': '2'
+AnyMoneyDispatcher = Dispatcher(
+    bot,
+    storage=storage)
+
+merchant_apis = {
+    _app['AM_MERCH0']: _app["AM_API0"],
+    _app['AM_MERCH1']: _app["AM_API1"]
 }
 
-# merchants buttons title:id
+# merchants buttons title:data
 merchants_btns = [
-    ['name1', '1111'],
-    ['name2', '2222']
+    ['Мерчант 1', _app["AM_MERCH0"]],
+    ['Мерчант 2', _app["AM_MERCH1"]]
 ]
 
 # in_curr buttons title:data
@@ -45,12 +69,22 @@ status_text = '''
 Валюта:\t{in_curr}
 Сумма:\t{amount}
 Почта:\t{email}
-Срок действия:\t{lifetime}</code>
+Срок действия:\t{lifetime}</code>,
+<b>Ссылка на оплату</b>:\t{link} 
 '''
 
 cancel_btn = types.InlineKeyboardButton('Завершить', callback_data='cancel')
 
 regex = re.compile(r'([A-Za-z0-9]+[.-_])*[A-Za-z0-9]+@[A-Za-z0-9-]+(\.[A-Z|a-z]{2,})+')
+
+
+def _is_float(string: str) -> bool:
+    string = string.replace(",", ".")
+    try:
+        float(string)
+    except Exception:
+        return False
+    return True
 
 
 class Form(StatesGroup):
@@ -61,7 +95,7 @@ class Form(StatesGroup):
     lifetime = State()
 
 
-@dp.message_handler(commands=['start'])
+@AnyMoneyDispatcher.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     await Form.merchant.set()
 
@@ -77,11 +111,17 @@ async def cmd_start(message: types.Message):
     )
 
 
-@dp.callback_query_handler(state='*', text='cancel')
+@AnyMoneyDispatcher.callback_query_handler(state='*', text='cancel')
 async def cancel_handler(callback_query: CallbackQuery, state: FSMContext):
     """
     Allow user to cancel any action
     """
+
+    # удаляем сообщение об ошибке
+    async with state.proxy() as data:
+        if "invalid_message" in data:
+            await data["invalid_message"].delete()
+
     current_state = await state.get_state()
     if current_state is None:
         return
@@ -95,7 +135,7 @@ async def cancel_handler(callback_query: CallbackQuery, state: FSMContext):
     )
 
 
-@dp.callback_query_handler(state=Form.merchant)
+@AnyMoneyDispatcher.callback_query_handler(state=Form.merchant)
 async def merchant_callback(callback_query: CallbackQuery, state: FSMContext):
     """
     Process of choice merchant
@@ -119,7 +159,7 @@ async def merchant_callback(callback_query: CallbackQuery, state: FSMContext):
     )
 
 
-@dp.callback_query_handler(state=Form.in_curr)
+@AnyMoneyDispatcher.callback_query_handler(state=Form.in_curr)
 async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
     """
     Process of choice in_curr
@@ -134,28 +174,28 @@ async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
     await bot.edit_message_text(
         chat_id=callback_query.from_user.id,
         message_id=callback_query.message.message_id,
-        text="Введите сумму оплаты",
+        text="Введите сумму оплаты (Например: 3000 или 3000,10)",
         reply_markup=inline_keyboard
     )
 
 
-@dp.message_handler(lambda message: not message.text.isdigit(), state=Form.amount)
+@AnyMoneyDispatcher.message_handler(lambda message: not _is_float(message.text), state=Form.amount)
 async def process_amount_invalid(message: types.Message, state: FSMContext):
     """
     If amount is invalid
     """
     async with state.proxy() as data:
-        if data.get('amount_invalid_message') is None:
+        if data.get('invalid_message') is None:
             invalid_message = await bot.send_message(
                 chat_id=message.from_user.id,
                 text='Сумма должна быть числом'
             )
-            data['amount_invalid_message'] = invalid_message
+            data['invalid_message'] = invalid_message
 
     await message.delete()
 
 
-@dp.message_handler(lambda message: message.text.isdigit(), state=Form.amount)
+@AnyMoneyDispatcher.message_handler(lambda message: _is_float(message.text), state=Form.amount)
 async def process_amount(message: types.Message, state: FSMContext):
     """
     Process of input amount
@@ -163,8 +203,8 @@ async def process_amount(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['amount'] = message.text
         message_id = data['message_id']
-        if data.get('amount_invalid_message') is not None:
-            await data['amount_invalid_message'].delete()
+        if data.get('invalid_message') is not None:
+            await data['invalid_message'].delete()
 
     await Form.next()
     inline_keyboard = types.InlineKeyboardMarkup()
@@ -180,7 +220,7 @@ async def process_amount(message: types.Message, state: FSMContext):
     )
 
 
-@dp.message_handler(state=Form.client_email)
+@AnyMoneyDispatcher.message_handler(state=Form.client_email)
 async def process_client_email(message: types.Message, state: FSMContext):
     """
     Process of input client_email
@@ -190,8 +230,8 @@ async def process_client_email(message: types.Message, state: FSMContext):
         async with state.proxy() as data:
             data['client_email'] = message.text
             message_id = data['message_id']
-            if data.get('email_invalid_message') is not None:
-                await data['email_invalid_message'].delete()
+            if data.get('invalid_message') is not None:
+                await data['invalid_message'].delete()
 
         await Form.next()
 
@@ -211,17 +251,17 @@ async def process_client_email(message: types.Message, state: FSMContext):
     # invalid email
     else:
         async with state.proxy() as data:
-            if data.get('email_invalid_message') is None:
+            if data.get('invalid_message') is None:
                 invalid_message = await bot.send_message(
                     chat_id=message.from_user.id,
                     text='Неверный адрес почты'
                 )
-                data['email_invalid_message'] = invalid_message
+                data['invalid_message'] = invalid_message
 
         await message.delete()
 
 
-@dp.callback_query_handler(state=Form.lifetime)
+@AnyMoneyDispatcher.callback_query_handler(state=Form.lifetime)
 async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
     """
     Process of choice lifetime
@@ -229,36 +269,49 @@ async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
         data['lifetime'] = callback_query.data
 
-        merchant_key = merchants_keys[data['merchant_id']]
+        # генерация ссылки
 
-        """
-        Генерация ссылки
-        """
+        _merch_id = data["merchant_id"]
+        _merch_api = merchant_apis[_merch_id]
+        _in_curr = data["in_curr"]
+        _amount = data["amount"]
+        _email = data["client_email"]
+        _lifetime = data["lifetime"]
 
-        text = status_text.format(
-            merchant=data['merchant_id'],
-            in_curr=data['in_curr'],
-            amount=data['amount'],
-            email=data['client_email'],
-            lifetime=data['lifetime']
-        )
-        await bot.edit_message_text(
-            chat_id=callback_query.from_user.id,
-            message_id=callback_query.message.message_id,
-            text=text
-        )
-        anymoney = AnyMoney()
-        await anymoney.invoice_create(data['merchant_id'], data['in_curr'], data['amount'], data['client_email'], data['lifetime'])
+        # делаем запрос
+        anymoney = AnyMoney(_merch_api, _merch_id)
+        _am_data = await anymoney.invoice_create(
+            _merch_id,
+            _in_curr,
+            _amount,
+            _email,
+            _lifetime)
 
-
+        # пишем ошибку в лог, если нет paylink
+        if "result" not in _am_data:
+            raise Exception("'result' is missing in server responce, got: %s" % _am_data)
+        else:
+            await bot.edit_message_text(
+                chat_id=callback_query.from_user.id,
+                message_id=callback_query.message.message_id,
+                text=status_text.format(
+                    merchant=_merch_id,
+                    in_curr=_in_curr,
+                    amount=_amount,
+                    email=_email,
+                    lifetime=_lifetime,
+                    link=_am_data["result"]["paylink"]
+                )
+            )
 
     await state.finish()
 
 
-@dp.message_handler(state='*', content_types=ContentType.ANY)
+@AnyMoneyDispatcher.message_handler(state='*', content_types=ContentType.ANY)
 async def del_message(message: types.Message):
     await message.delete()
 
 
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+__all__ = (
+    "AnyMoneyDispatcher",
+)

@@ -1,5 +1,4 @@
 
-from os import environ
 from tgam import AnyMoney
 from unittest import IsolatedAsyncioTestCase
 from configparser import ConfigParser

@@ -1,4 +1,6 @@
 
+from uuid import uuid1
+
 from time import time
 
 from hmac import (
@@ -87,7 +89,7 @@ class AnyMoney:
         currency: str,
         amount: str,
         email: str,
-        lifetime: str) -> None:
+        lifetime: str) -> dict:
         """
         Создать инвойс (ордер) для оплаты в определенной валюте и
         до определенного срока.
@@ -96,11 +98,12 @@ class AnyMoney:
         :param str amount: счет, например 3002,10
         :params str email: почта клиента, куда придет оповещение об операции
         :param str lifetime: время активности ордера
+        :return dict: ответ сервера
         """
         return await self.call_method(
             "invoice.create",
             {
-                "externalid": merchant_id,
+                "externalid": str(uuid1()),
                 "amount": amount,
                 "in_curr": currency,
                 "client_email": email,
