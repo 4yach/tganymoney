@@ -56,6 +56,7 @@ class AnyMoney:
 
         :param str method: имя метода, который нужно вызвать (Например: invoice.create)
         :param dict params: словарь с параметрами, без вложенностей, без массивов и None
+        :return dict: JSON ответ
         """
         _result: dict = {}
 
@@ -86,7 +87,7 @@ class AnyMoney:
         currency: str,
         amount: str,
         email: str,
-        lifetime: str):
+        lifetime: str) -> None:
         """
         Создать инвойс (ордер) для оплаты в определенной валюте и
         до определенного срока.
@@ -103,5 +104,7 @@ class AnyMoney:
                 "amount": amount,
                 "in_curr": currency,
                 "client_email": email,
-                "lifetime": lifetime
+                "lifetime": lifetime,
+                # FIXME: точно неизвестно, односторонний платеж (без возврата) или нет
+                "is_multipay": True
             })
