@@ -6,7 +6,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import CallbackQuery, ContentType
 from aiogram.utils import executor
-
+from tgam.anymoney import AnyMoney
 logging.basicConfig(level=logging.INFO)
 
 API_TOKEN = ''
@@ -247,6 +247,10 @@ async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
             message_id=callback_query.message.message_id,
             text=text
         )
+        anymoney = AnyMoney()
+        await anymoney.invoice_create(data['merchant_id'], data['in_curr'], data['amount'], data['client_email'], data['lifetime'])
+
+
 
     await state.finish()
 
