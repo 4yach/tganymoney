@@ -16,6 +16,8 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 # конфигурируем лог
 logging.basicConfig(
+    filename='bot.log',
+    format=u'%(filename)s [LINE:%(lineno)d] [%(asctime)s] #%(levelname)-8s %(message)s',
     level=logging.INFO)
 
 # открываем конфиг файл
@@ -68,8 +70,8 @@ status_text = '''
 Валюта:\t{in_curr}
 Сумма:\t{amount}
 Почта:\t{email}
-Срок действия:\t{lifetime}</code>,
-<b><a href="{link}">Ссылка на оплату</a></b>
+Срок действия:\t{lifetime}</code>
+Ссылка: {link}
 '''
 
 link_text = '''
@@ -293,11 +295,13 @@ async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
         # генерация ссылки
 
         _merch_id = data["merchant_id"]
+        _merch_title = [btn[0] for btn in merchants_btns if data["merchant_id"] == btn[1]][0]
         _merch_api = merchant_apis[_merch_id]
         _in_curr = data["in_curr"]
         _amount = data["amount"]
         _email = data["client_email"]
         _lifetime = data["lifetime"]
+        _lifetime_title = [btn[0] for btn in lifetime_btns if data["lifetime"] == btn[1]][0]
 
         # делаем запрос
         anymoney = AnyMoney(_merch_api, _merch_id)
@@ -316,12 +320,12 @@ async def in_curr_callback(callback_query: CallbackQuery, state: FSMContext):
                 chat_id=callback_query.from_user.id,
                 message_id=callback_query.message.message_id,
                 disable_web_page_preview=True,
-                text=link_text.format(
-                    merchant=_merch_id,
+                text=status_text.format(
+                    merchant=_merch_title,
                     in_curr=_in_curr,
                     amount=_amount,
                     email=_email,
-                    lifetime=_lifetime,
+                    lifetime=_lifetime_title,
                     link=_am_data["result"]["paylink"]
                 )
             )
